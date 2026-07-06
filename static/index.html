@@ -90,6 +90,12 @@
     const listEl = document.getElementById('list');
     const emptyEl = document.getElementById('empty');
 
+    // Keyed by task id, not by DOM element - the task list gets fully torn
+    // down and rebuilt on every periodic refresh (to reflect the background
+    // worker flipping a task to "Notified"), which would otherwise silently
+    // wipe out a file the user picked but hadn't clicked "Attach" for yet.
+    const pendingFiles = new Map();
+
     function showError(message) {
       errorEl.textContent = message;
       errorEl.style.display = message ? 'block' : 'none';
@@ -135,17 +141,36 @@
       fileInput.type = 'file';
       fileInput.style.fontSize = '12px';
       fileInput.style.color = 'var(--text-dim)';
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files[0]) pendingFiles.set(task.id, fileInput.files[0]);
+      });
+      // Restore a selection made before this element existed (i.e. before the
+      // last periodic refresh tore down and rebuilt the list).
+      const pending = pendingFiles.get(task.id);
+      if (pending) {
+        const dt = new DataTransfer();
+        dt.items.add(pending);
+        fileInput.files = dt.files;
+      }
 
       const attachBtn = document.createElement('button');
       attachBtn.className = 'small ghost';
       attachBtn.textContent = 'Attach';
       attachBtn.onclick = async () => {
-        if (!fileInput.files.length) return;
+        const file = pendingFiles.get(task.id);
+        if (!file) {
+          showError('Choose a file first.');
+          return;
+        }
         const fd = new FormData();
-        fd.append('file', fileInput.files[0]);
+        fd.append('file', file);
         try {
           await api(`/tasks/${task.id}/attach`, { method: 'POST', body: fd });
+          pendingFiles.delete(task.id);
           showError('');
+          attachBtn.textContent = 'Attached!';
+          attachBtn.disabled = true;
+          await new Promise((resolve) => setTimeout(resolve, 700));
           await refresh();
         } catch (err) {
           showError(err.message);
