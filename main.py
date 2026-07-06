@@ -198,7 +198,10 @@ _memory_ballast: list[bytes] = []
 
 @app.post("/simulate-load")
 def simulate_load(add_mb: int = 50):
-    _memory_ballast.append(bytes(add_mb * 1024 * 1024))
+    # os.urandom, not bytes(n) - an all-zero buffer maps to the kernel's shared
+    # zero page and never actually commits real RSS, so `docker stats` wouldn't
+    # move at all. Random bytes force genuine, distinct physical pages.
+    _memory_ballast.append(os.urandom(add_mb * 1024 * 1024))
     total_mb = sum(len(b) for b in _memory_ballast) // (1024 * 1024)
     return {"status": "allocated", "added_mb": add_mb, "total_leaked_mb": total_mb}
 
