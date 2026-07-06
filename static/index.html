@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TaskFlow</title>
+<style>
+  :root {
+    --bg: #0f1115; --surface: #171a21; --border: #262b35;
+    --text: #e6e9ef; --text-dim: #8b93a3;
+    --accent: #4f8cff; --accent-hover: #6ba0ff;
+    --green: #3ddc97; --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    display: flex; justify-content: center; padding: 48px 16px;
+  }
+  .wrap { width: 100%; max-width: 720px; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h1 .dot { color: var(--accent); }
+  p.subtitle { color: var(--text-dim); margin: 0 0 28px; font-size: 14px; }
+
+  .error-banner {
+    background: rgba(255,107,107,0.12); border: 1px solid var(--danger); color: var(--danger);
+    padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 20px;
+    font-family: 'Cascadia Code', Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+  }
+
+  form.add-form { display: flex; gap: 8px; margin-bottom: 28px; }
+  input[type="text"] {
+    flex: 1; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text); font-size: 14px;
+  }
+  input[type="text"]:focus { outline: none; border-color: var(--accent); }
+  button {
+    padding: 12px 20px; border-radius: 8px; border: none; background: var(--accent);
+    color: white; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.small { padding: 7px 12px; font-size: 12.5px; }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text-dim); }
+  button.ghost:hover { background: var(--border); color: var(--text); }
+  button.danger-ghost { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+  button.danger-ghost:hover { background: rgba(255,107,107,0.12); }
+
+  .list { display: flex; flex-direction: column; gap: 10px; }
+  .task {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px;
+  }
+  .task-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+  .task-title { font-weight: 600; font-size: 15px; }
+  .task-meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .badge {
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+  }
+  .badge.pending { background: rgba(139,147,163,0.15); color: var(--text-dim); }
+  .badge.notified { background: rgba(61,220,151,0.15); color: var(--green); }
+
+  .task-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .attachments { margin-top: 8px; font-size: 12px; color: var(--text-dim); }
+  .attachments span { display: inline-block; margin-right: 10px; }
+
+  .empty { color: var(--text-dim); font-size: 14px; text-align: center; padding: 32px 0; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1><span class="dot">&#9670;</span> TaskFlow</h1>
+    <p class="subtitle">A tiny team task board — Redis for tasks, RabbitMQ for notifications, MinIO for attachments.</p>
+
+    <div id="error" class="error-banner" style="display:none"></div>
+
+    <form class="add-form" id="add-form">
+      <input id="title-input" type="text" placeholder="What needs doing?" required />
+      <button type="submit" id="add-btn">Add Task</button>
+    </form>
+
+    <div class="list" id="list"></div>
+    <div class="empty" id="empty" style="display:none">No tasks yet.</div>
+  </div>
+
+  <script>
+    const form = document.getElementById('add-form');
+    const titleInput = document.getElementById('title-input');
+    const addBtn = document.getElementById('add-btn');
+    const errorEl = document.getElementById('error');
+    const listEl = document.getElementById('list');
+    const emptyEl = document.getElementById('empty');
+
+    function showError(message) {
+      errorEl.textContent = message;
+      errorEl.style.display = message ? 'block' : 'none';
+    }
+
+    async function api(path, options) {
+      const res = await fetch(path, options);
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`HTTP ${res.status} on ${path}\n${body}`);
+      }
+      return res.json();
+    }
+
+    function renderTask(task) {
+      const el = document.createElement('div');
+      el.className = 'task';
+
+      const top = document.createElement('div');
+      top.className = 'task-top';
+
+      const titleBlock = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'task-title';
+      title.textContent = task.title;
+      const meta = document.createElement('div');
+      meta.className = 'task-meta';
+      meta.textContent = new Date(task.created_at).toLocaleString();
+      titleBlock.appendChild(title);
+      titleBlock.appendChild(meta);
+
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + (task.notified === '1' ? 'notified' : 'pending');
+      badge.textContent = task.notified === '1' ? 'Notified' : 'Pending';
+
+      top.appendChild(titleBlock);
+      top.appendChild(badge);
+
+      const actions = document.createElement('div');
+      actions.className = 'task-actions';
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.style.fontSize = '12px';
+      fileInput.style.color = 'var(--text-dim)';
+
+      const attachBtn = document.createElement('button');
+      attachBtn.className = 'small ghost';
+      attachBtn.textContent = 'Attach';
+      attachBtn.onclick = async () => {
+        if (!fileInput.files.length) return;
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        try {
+          await api(`/tasks/${task.id}/attach`, { method: 'POST', body: fd });
+          showError('');
+          await refresh();
+        } catch (err) {
+          showError(err.message);
+        }
+      };
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'small danger-ghost';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.onclick = async () => {
+        try {
+          await api(`/tasks/${task.id}`, { method: 'DELETE' });
+          showError('');
+          await refresh();
+        } catch (err) {
+          showError(err.message);
+        }
+      };
+
+      actions.appendChild(fileInput);
+      actions.appendChild(attachBtn);
+      actions.appendChild(deleteBtn);
+
+      const attachmentsEl = document.createElement('div');
+      attachmentsEl.className = 'attachments';
+
+      el.appendChild(top);
+      el.appendChild(actions);
+      el.appendChild(attachmentsEl);
+
+      api(`/tasks/${task.id}/attachments`)
+        .then((data) => {
+          if (data.attachments.length === 0) return;
+          attachmentsEl.innerHTML = data.attachments
+            .map((a) => `<span>&#128206; ${a.key.split('/').slice(1).join('/')} (${a.size}B)</span>`)
+            .join('');
+        })
+        .catch(() => {});
+
+      return el;
+    }
+
+    async function refresh() {
+      try {
+        const data = await api('/tasks');
+        showError('');
+        listEl.innerHTML = '';
+        if (data.tasks.length === 0) {
+          emptyEl.style.display = 'block';
+          return;
+        }
+        emptyEl.style.display = 'none';
+        data.tasks
+          .slice()
+          .reverse()
+          .forEach((task) => listEl.appendChild(renderTask(task)));
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      addBtn.disabled = true;
+      try {
+        await api('/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: titleInput.value }),
+        });
+        showError('');
+        titleInput.value = '';
+        await refresh();
+      } catch (err) {
+        showError(err.message);
+      } finally {
+        addBtn.disabled = false;
+      }
+    });
+
+    refresh();
+    setInterval(refresh, 4000);
+  </script>
+</body>
+</html>
