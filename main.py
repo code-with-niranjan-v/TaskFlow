@@ -185,3 +185,25 @@ def list_attachments(task_id: str):
     _check_bucket()
     objects = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=f"{task_id}/").get("Contents", [])
     return {"attachments": [{"key": o["Key"], "size": o["Size"]} for o in objects]}
+
+
+# Deliberately kept at module scope (not a local var freed when the request
+# ends) so each allocation survives past its own request - simulating a real
+# memory leak rather than a transient spike the garbage collector would clean
+# up on its own. This exists purely to demo a hosting platform's proactive
+# memory-spike detection: sustained usage climbing toward the container's
+# --memory limit, well before the kernel OOM-kills the process.
+_memory_ballast: list[bytes] = []
+
+
+@app.post("/simulate-load")
+def simulate_load(add_mb: int = 50):
+    _memory_ballast.append(bytes(add_mb * 1024 * 1024))
+    total_mb = sum(len(b) for b in _memory_ballast) // (1024 * 1024)
+    return {"status": "allocated", "added_mb": add_mb, "total_leaked_mb": total_mb}
+
+
+@app.post("/simulate-load/reset")
+def reset_simulated_load():
+    _memory_ballast.clear()
+    return {"status": "reset"}

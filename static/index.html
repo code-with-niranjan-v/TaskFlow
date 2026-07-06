@@ -64,6 +64,13 @@
   .attachments span { display: inline-block; margin-right: 10px; }
 
   .empty { color: var(--text-dim); font-size: 14px; text-align: center; padding: 32px 0; }
+
+  .load-sim {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 24px; padding: 12px 16px;
+    background: var(--surface); border: 1px dashed var(--border); border-radius: 8px;
+  }
+  .load-sim-label { font-size: 12.5px; color: var(--text-dim); flex: 1; }
+  #load-status { font-size: 12px; color: var(--text-dim); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -72,6 +79,13 @@
     <p class="subtitle">A tiny team task board — Redis for tasks, RabbitMQ for notifications, MinIO for attachments.</p>
 
     <div id="error" class="error-banner" style="display:none"></div>
+
+    <div class="load-sim">
+      <span class="load-sim-label">Demo: simulate a memory spike (never released - simulates a leak)</span>
+      <span id="load-status"></span>
+      <button type="button" id="load-btn" class="small ghost">+50MB</button>
+      <button type="button" id="load-reset-btn" class="small danger-ghost">Reset</button>
+    </div>
 
     <form class="add-form" id="add-form">
       <input id="title-input" type="text" placeholder="What needs doing?" required />
@@ -248,6 +262,28 @@
         showError(err.message);
       } finally {
         addBtn.disabled = false;
+      }
+    });
+
+    const loadBtn = document.getElementById('load-btn');
+    const loadResetBtn = document.getElementById('load-reset-btn');
+    const loadStatus = document.getElementById('load-status');
+
+    loadBtn.addEventListener('click', async () => {
+      try {
+        const data = await api('/simulate-load?add_mb=50', { method: 'POST' });
+        loadStatus.textContent = `Leaked ${data.total_leaked_mb}MB total`;
+      } catch (err) {
+        showError(err.message);
+      }
+    });
+
+    loadResetBtn.addEventListener('click', async () => {
+      try {
+        await api('/simulate-load/reset', { method: 'POST' });
+        loadStatus.textContent = '';
+      } catch (err) {
+        showError(err.message);
       }
     });
 
